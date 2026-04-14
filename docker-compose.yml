@@ -1,0 +1,92 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: customerorder-db
+    environment:
+      POSTGRES_DB: customerorderdb
+      POSTGRES_USER: customerorder
+      POSTGRES_PASSWORD: password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U customerorder -d customerorderdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - customerorder-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: customerorder-app
+    environment:
+      DATABASE_URL: postgresql://customerorder:password@db:5432/customerorderdb
+      DATABASE_ECHO: "False"
+      DEBUG: "True"
+      SECRET_KEY: "dev-secret-key-change-in-production"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        sleep 5 &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting application...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - customerorder-network
+
+  frontend-react:
+    build:
+      context: ./frontend-react
+      dockerfile: Dockerfile
+    container_name: customerorder-frontend-react
+    ports:
+      - "3000:80"
+    depends_on:
+      - app
+    networks:
+      - customerorder-network
+    labels:
+      - "description=Modern React Frontend"
+
+  frontend-dojo:
+    build:
+      context: ./frontend-dojo
+      dockerfile: Dockerfile
+    container_name: customerorder-frontend-dojo
+    ports:
+      - "3001:80"
+    depends_on:
+      - app
+    networks:
+      - customerorder-network
+    labels:
+      - "description=Classic Dojo Frontend"
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  customerorder-network:
+    driver: bridge
